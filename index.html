@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+<head>
+<title>toioとWebBluetoothで繋いでみよう</title>
+<script>
+
+// toio コア キューブ（単体）付属の簡易カード Standard ID 連想配列
+const StdIdMap = {
+    3670320:'0',3670321:'1',3670322:'2',3670323:'3',3670324:'4',3670325:'5',3670326:'6',3670327:'7',3670328:'8',3670329:'9',
+
+    3670337:'A',3670338:'B',3670339:'C',3670340:'D',3670341:'E',3670342:'F',3670343:'G',3670344:'H',
+    3670345:'I',3670346:'J',3670347:'K',3670348:'L',3670349:'M',3670350:'N',3670351:'O',3670352:'P',
+    3670353:'Q',3670354:'R',3670355:'S',3670356:'T',3670357:'U',3670358:'V',3670359:'W',3670360:'X',
+    3670361:'Y',3670362:'Z',
+
+    3670305:'!',3670366:'↑',3670335:'?',3670315:'+',3670317:'−',3670333:'=',3670332:'←',3670367:'↓',
+    3670334:'→',3670314:'×',3670309:'%',3670319:'÷'
+};
+
+const SERVICE_UUID = '10b20100-5b3b-4571-9508-cf3efcd7bbae';
+const ID_UUID = '10b20101-5b3b-4571-9508-cf3efcd7bbae';
+const BATT_UUID = '10b20108-5b3b-4571-9508-cf3efcd7bbae';
+const MOTOR_UUID = '10b20102-5b3b-4571-9508-cf3efcd7bbae';
+const SOUND_UUID = '10b20104-5b3b-4571-9508-cf3efcd7bbae';
+
+class Toio {
+
+  constructor() {
+    this.device = null;
+    this.connect=0;
+  }
+
+  // 接続処理
+  toggle() {
+    if(this.connect==0) {
+        let options = {filters:[]};
+        
+        options.filters.push({name:'toio Core Cube'});
+        options.filters.push({services:[SERVICE_UUID]});
+      
+      if(navigator.bluetooth){
+        return navigator.bluetooth.requestDevice(options)
+        .then(device => {
+          this.device = device;
+          this.device.addEventListener("gattserverdisconnected",(err)=>{
+            console.log("disconnect",err);
+            this.connect=0;
+            document.getElementById("btn1").innerHTML="toioと接続する";
+          });
+          this.connect=1;
+          document.getElementById("btn1").innerHTML="接続中だよ";
+          return device.gatt.connect();
+        },(err)=>{alert(`エラー: ${err}`)});
+      }
+      else {
+        alert("このブラウザでは WebBluetooth はサポートされていません");
+      }
+    }
+    else{
+      this.device.gatt.disconnect();
+    }
+  }
+
+  // デバッグ用
+  buf2hex(buffer) {
+    return Array.prototype.map.call(new Uint8Array(buffer), x => ('00' + x.toString(16)).slice(-2)).join('');
+  }
+
+  // 読み取ったIDを通知するように設定
+  id_nottify() {
+    if(!this.connect)
+      return;
+    return this.device.gatt.getPrimaryService(SERVICE_UUID)
+      .then(service => service.getCharacteristic(ID_UUID))
+      .then(characteristic => {
+          characteristic.addEventListener('characteristicvaluechanged',this.id_handler);
+          characteristic.startNotifications();
+        });
+  }
+
+  // ID通知処理
+  id_handler(event) {
+    const value = event.target.value
+    const buf = new Uint8Array(value.buffer);
+
+    if(buf[0] == 0x02){
+        let stdID = (buf[4] << 24) + (buf[3] << 16) + (buf[2] << 8) + buf[1];
+        let name = StdIdMap[stdID];
+        if(name != undefined){
+          document.getElementById("positionID").innerHTML=`簡易カードの${name}ブロック`;
+        } else {
+          document.getElementById("positionID").innerHTML=`Standard ID=${stdID}`;
+        }
+    } else {
+        document.getElementById("positionID").innerHTML=`Code=${buf[0]}`;
+    }
+  }
+
+  // 効果音再生
+  sound_on(no) {
+    if(!this.connect)
+      return;
+    return this.device.gatt.getPrimaryService(SERVICE_UUID)
+      .then(service => service.getCharacteristic(SOUND_UUID))
+      .then(characteristic => {
+          characteristic.writeValue(new Uint8Array([0x02,no,0xff]));
+      });
+  }
+
+  // バッテリーの残量を通知するように設定
+  batt_notify(){
+    if(!this.connect)
+      return;
+    return this.device.gatt.getPrimaryService(SERVICE_UUID)
+      .then(service => service.getCharacteristic(BATT_UUID))
+      .then(characteristic => {
+          characteristic.addEventListener('characteristicvaluechanged',this.batt_handler);
+          characteristic.startNotifications();
+        });
+  }
+
+  // バッテリーの残量通知処理
+  batt_handler(event) {
+    const value = event.target.value
+    const buf = new Uint8Array(value.buffer);
+    document.getElementById("batt").innerHTML=`バッテリー残量=${buf[0]}%`;
+  }
+
+  // toioを動かす
+  motor(a,a_speed,b,b_speed) {
+    if(!this.connect)
+      return;
+    return this.device.gatt.getPrimaryService(SERVICE_UUID)
+      .then(service => service.getCharacteristic(MOTOR_UUID))
+      .then(characteristic => {
+          characteristic.writeValue(new Uint8Array([0x01,0x01,a,a_speed,0x02,b,b_speed]));
+      });
+  }
+}
+
+let toio;
+
+window.onload=()=>{
+    toio = new Toio();
+};
+
+</script>
+<style type="text/css">
+body{ 
+  margin-right: auto;
+  margin-left : auto;
+  width:500px;
+}
+</style>
+</head>
+<body>
+<div>toioとWebBluetoothで繋いでみよう</div>
+
+<button id="btn1" onclick="toio.toggle()">toioと接続する</button><br/>
+
+<button id="btn14" onclick="toio.batt_notify()">batt_nottify</button><br/>
+<div id="batt"></div>
+
+<button id="btn3" onclick="toio.id_nottify()">id_nottify</button><br/>
+<div id="positionID"></div>
+
+<button id="btn19" onclick="toio.motor(0x1,0x0,0x01,0x10)">前左</button>
+<button id="btn15" onclick="toio.motor(0x1,0x10,0x1,0x10)">前</button>
+<button id="btn18" onclick="toio.motor(0x1,0x10,0x01,0x0)">前右</button><br/>
+<button id="btn17" onclick="toio.motor(0x1,0x0,0x01,0x0)">停止</button><br/>
+<button id="btn16" onclick="toio.motor(0x2,0x10,0x02,0x10)">後</button><br/>
+
+<button id="btn4" onclick="toio.sound_on(0)">sound_on(0)</button>
+<button id="btn5" onclick="toio.sound_on(1)">sound_on(1)</button>
+<button id="btn6" onclick="toio.sound_on(2)">sound_on(2)</button>
+<button id="btn7" onclick="toio.sound_on(3)">sound_on(3)</button>
+<button id="btn8" onclick="toio.sound_on(4)">sound_on(4)</button>
+<button id="btn9" onclick="toio.sound_on(5)">sound_on(5)</button>
+<button id="btn10" onclick="toio.sound_on(6)">sound_on(6)</button>
+<button id="btn11" onclick="toio.sound_on(7)">sound_on(7)</button>
+<button id="btn12" onclick="toio.sound_on(8)">sound_on(8)</button>
+<button id="btn13" onclick="toio.sound_on(9)">sound_on(9)</button>
+<br/>
+
+</body>
+</html>
